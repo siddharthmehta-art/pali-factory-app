@@ -1,10 +1,4 @@
-from streamlit_gsheets import GSheetsConnection
-# Create connection to your Google Sheet
-conn = st.connection("gsheets", type=GSheetsConnection)
-# To Read Data
-existing_data = conn.read(worksheet="Sheet1")
-# To Save Data (Add this inside your 'Submit' button code)
-conn.update(worksheet="Sheet1", data=updated_df)
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
