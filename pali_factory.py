@@ -66,4 +66,3 @@ with tabs[0]:
     if st.session_state['user_role'] == "Admin":
         with st.expander("➕ Create New Order"):
             with st.form("order_form", clear_on_submit=
-                         
