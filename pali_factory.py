@@ -3,17 +3,26 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 
-# --- APP CONFIG & STYLING ---
-st.set_page_config(page_title="Pali Cable ERP - Master", layout="wide")
+# --- 1. SYSTEM CONFIGURATION (SAP UI Style) ---
+st.set_page_config(page_title="Pali Cable ERP Portal", layout="wide", initial_sidebar_state="expanded")
+
+# Professional CSS for a Clean Corporate Look
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .reportview-container { background: #f0f2f6; }
+    .stMetric { border: 1px solid #d1d8e0; padding: 10px; border-radius: 8px; background: white; }
+    .stAlert { border-radius: 8px; }
+    div[data-baseweb="tab-list"] { gap: 8px; }
+    div[data-baseweb="tab"] { 
+        background-color: #e4e7eb; border-radius: 4px 4px 0 0; padding: 10px 20px;
+    }
+    div[data-baseweb="tab"][aria-selected="true"] { 
+        background-color: #004a99; color: white; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FILE PATHS ---
+# --- 2. SECURE DATA CORE ---
 DB_FILES = {
     "users": "users_db.csv",
     "prod": "production_logs.csv",
@@ -22,147 +31,157 @@ DB_FILES = {
     "prog": "daily_programme.csv"
 }
 
-# --- DATA ENGINE (Zero-Flaw Loading) ---
-def load_data(key, default_cols):
-    filename = DB_FILES[key]
-    if os.path.exists(filename):
-        try:
-            df = pd.read_csv(filename)
-            # Ensure all required columns exist
-            for col in default_cols:
-                if col not in df.columns:
-                    df[col] = 0 if "Qty" in col or "KM" in col or "Mat" in col else "N/A"
-            return df
-        except Exception:
-            return pd.DataFrame(columns=default_cols)
-    return pd.DataFrame(columns=default_cols)
+def get_db(key):
+    cols = {
+        "users": ["UserID", "Password", "Role"],
+        "prod": ["Date", "Operator", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info", "Status"],
+        "stock": ["Item", "Quantity"],
+        "orders": ["Order_ID", "Customer", "Item", "Qty", "Deadline"],
+        "prog": ["Date", "Shift", "Time", "Machine", "Target_Product", "Target_Qty", "Instructions", "Status"]
+    }
+    if os.path.exists(DB_FILES[key]):
+        df = pd.read_csv(DB_FILES[key])
+        # Auto-fix missing columns
+        for c in cols[key]:
+            if c not in df.columns: df[c] = 0 if "Qty" in c or "KM" in c else "N/A"
+        return df
+    return pd.DataFrame(columns=cols[key])
 
-def save_data(df, key):
+def commit_db(df, key):
     df.to_csv(DB_FILES[key], index=False)
 
-# --- AUTHENTICATION ---
-if 'logged_in' not in st.session_state:
-    st.session_state.update({'logged_in': False, 'user_role': None, 'user_id': None})
+# --- 3. AUTHENTICATION (The Security Gate) ---
+if 'auth' not in st.session_state:
+    st.session_state.auth = {"logged_in": False, "user": None, "role": None}
 
-users_df = load_data("users", ["UserID", "Password", "Role"])
-if users_df.empty:
-    save_data(pd.DataFrame([{"UserID": "admin", "Password": "pali123", "Role": "Admin"}]), "users")
+users = get_db("users")
+if users.empty:
+    users = pd.DataFrame([{"UserID": "admin", "Password": "pali123", "Role": "Admin"}])
+    commit_db(users, "users")
 
-if not st.session_state['logged_in']:
-    st.title("🛡️ Pali Cable ERP - Secure Access")
+if not st.session_state.auth["logged_in"]:
+    st.title("🏭 Pali Cable ERP Portal")
     with st.container():
-        u_id = st.text_input("User ID")
-        u_pw = st.text_input("Password", type="password")
-        if st.button("Login"):
-            match = users_df[(users_df['UserID'] == u_id) & (users_df['Password'] == u_pw)]
-            if not match.empty:
-                st.session_state.update({'logged_in': True, 'user_role': match.iloc[0]['Role'], 'user_id': u_id})
-                st.rerun()
-            else:
-                st.error("Invalid Credentials")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            u = st.text_input("Username")
+            p = st.text_input("Password", type="password")
+            if st.button("Secure Login"):
+                match = users[(users['UserID'] == u) & (users['Password'] == p)]
+                if not match.empty:
+                    st.session_state.auth = {"logged_in": True, "user": u, "role": match.iloc[0]['Role']}
+                    st.rerun()
+                else: st.error("Authentication Failed")
     st.stop()
 
-# --- HEADER ---
-st.sidebar.title(f"Logged in: {st.session_state['user_id']}")
-if st.sidebar.button("Logout"):
-    st.session_state.update({'logged_in': False})
+# --- 4. NAVIGATION ---
+st.sidebar.image("https://img.icons8.com/fluency/96/factory.png", width=80)
+st.sidebar.title(f"Portal: {st.session_state.auth['user']}")
+st.sidebar.info(f"Role: {st.session_state.auth['role']}")
+
+if st.sidebar.button("Logoff System"):
+    st.session_state.auth = {"logged_in": False, "user": None, "role": None}
     st.rerun()
 
-# --- TABS ---
-tabs_list = ["📅 Daily Programme", "🏗️ Production", "🧪 QCI Lab", "📝 Orders"]
-if st.session_state['user_role'] == "Admin":
-    tabs_list.extend(["📦 Inventory", "📊 Analytics"])
+# --- 5. FUNCTIONAL MODULES ---
+tabs = st.tabs(["📅 Daily Programme", "🏗️ Work Entry", "🧪 QC Lab", "📝 Orders", "📦 Inventory", "📊 BI Analytics"])
 
-tabs = st.tabs(tabs_list)
-
-# 1. DAILY PROGRAMME (Enhanced with Carry-Forward Logic)
+# MODULE 1: DAILY PROGRAMME & CARRY-FORWARD
 with tabs[0]:
-    st.header("📅 Production Schedule")
-    prog_df = load_data("prog", ["Date", "Shift", "Time", "Machine", "Target_Product", "Target_Qty", "Instructions"])
-    prod_logs = load_data("prod", ["Date", "Machine", "KM"])
+    st.subheader("Production Scheduling & Carry-Forward")
+    prog = get_db("prog")
+    prod = get_db("prod")
     
-    if st.session_state['user_role'] == "Admin":
-        # Automated Carry Forward Check
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        y_prog = prog_df[prog_df['Date'] == yesterday]
-        for _, row in y_prog.iterrows():
-            done = prod_logs[(prod_logs['Date'] == yesterday) & (prod_logs['Machine'] == row['Machine'])]['KM'].sum()
-            pending = row['Target_Qty'] - done
+    if st.session_state.auth["role"] == "Admin":
+        # Professional Carry Forward Logic
+        yest = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        y_plan = prog[prog['Date'] == yest]
+        for idx, row in y_plan.iterrows():
+            actual = prod[(prod['Date'] == yest) & (prod['Machine'] == row['Machine'])]['KM'].sum()
+            pending = row['Target_Qty'] - actual
             if pending > 0:
-                st.warning(f"Pending: {row['Machine']} needs {pending:.2f} KM from yesterday.")
-                if st.button(f"Carry Forward {row['Machine']}"):
-                    new_entry = pd.DataFrame([{"Date": datetime.now().strftime("%Y-%m-%d"), "Shift": "Day", "Time": "08:00 AM", "Machine": row['Machine'], "Target_Product": row['Target_Product'], "Target_Qty": pending, "Instructions": "PENDING ORDER"}])
-                    save_data(pd.concat([prog_df, new_entry], ignore_index=True), "prog")
+                st.warning(f"⚠️ PENDING: Machine {row['Machine']} missed target by {pending:.2f} KM")
+                if st.button(f"Carry Forward {row['Machine']} to Today", key=f"cf_{idx}"):
+                    new_cf = pd.DataFrame([{
+                        "Date": datetime.now().strftime("%Y-%m-%d"), "Shift": "Day", "Time": "08:00",
+                        "Machine": row['Machine'], "Target_Product": row['Target_Product'],
+                        "Target_Qty": pending, "Instructions": "SYSTEM CARRY-FORWARD", "Status": "Open"
+                    }])
+                    commit_db(pd.concat([prog, new_cf]), "prog")
                     st.rerun()
 
-        with st.expander("➕ Set New Schedule"):
-            with st.form("prog_entry"):
+        with st.expander("➕ Create New Schedule"):
+            with st.form("new_schedule"):
                 c1, c2, c3 = st.columns(3)
                 d = c1.date_input("Date", datetime.now())
                 s = c2.selectbox("Shift", ["Day", "Night"])
-                t = c3.text_input("Time", "08:00 AM")
-                m = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-                prod = st.text_input("Product Name")
-                qty = st.number_input("Target KM", min_value=0.1)
-                inst = st.text_area("Admin Instructions")
-                if st.form_submit_button("Save Plan"):
-                    new_p = pd.DataFrame([{"Date": str(d), "Shift": s, "Time": t, "Machine": m, "Target_Product": prod, "Target_Qty": qty, "Instructions": inst}])
-                    save_data(pd.concat([prog_df, new_p], ignore_index=True), "prog")
-                    st.success("Plan Updated")
+                t = c3.text_input("Start Time", "08:00 AM")
+                m = st.selectbox("Select Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
+                prod_name = st.text_input("Product Specification")
+                t_qty = st.number_input("Target Quantity (KM)", min_value=0.0)
+                note = st.text_area("Admin Notes")
+                if st.form_submit_button("Post to Schedule"):
+                    entry = pd.DataFrame([{"Date": str(d), "Shift": s, "Time": t, "Machine": m, "Target_Product": prod_name, "Target_Qty": t_qty, "Instructions": note, "Status": "Open"}])
+                    commit_db(pd.concat([prog, entry]), "prog")
+                    st.success("Programme Published")
 
-    st.subheader("Today's Schedule")
-    st.table(prog_df[prog_df['Date'] == datetime.now().strftime("%Y-%m-%d")])
+    st.dataframe(prog[prog['Date'] == datetime.now().strftime("%Y-%m-%d")], use_container_width=True)
 
-# 2. PRODUCTION ENTRY (Professional Layout)
+# MODULE 2: WORK ENTRY (Operator Traceability)
 with tabs[1]:
-    st.header("🏗️ Operator Work Entry")
-    stock_df = load_data("stock", ["Item", "Quantity"])
-    with st.form("work_form", clear_on_submit=True):
-        m_sel = st.selectbox("Select Your Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-        p_name = st.text_input("Product Name/Size")
-        km_out = st.number_input("Output KM", min_value=0.0)
+    st.subheader("Operator Data Terminal")
+    stock = get_db("stock")
+    with st.form("op_entry", clear_on_submit=True):
+        m_sel = st.selectbox("Assigned Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
+        p_spec = st.text_input("Product Size/Batch")
+        km = st.number_input("Actual KM Produced", min_value=0.0)
         st.divider()
-        mat = st.selectbox("Material Used", stock_df['Item'].unique() if not stock_df.empty else ["Aluminum", "Copper", "PVC"])
-        cons = st.number_input("Consumed KG", min_value=0.0)
-        scrp = st.number_input("Scrap Produced KG", min_value=0.0)
-        stoppage = st.text_area("Machine Stoppage/Delay Reason (If any)")
-        
-        if st.form_submit_button("Submit Entry"):
-            logs = load_data("prod", ["Date", "Operator", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info", "Status"])
+        mat = st.selectbox("Primary Material", stock['Item'].unique() if not stock.empty else ["Aluminum", "Copper", "PVC"])
+        c_kg = st.number_input("Consumed (KG)", min_value=0.0)
+        s_kg = st.number_input("Scrap (KG)", min_value=0.0)
+        delay = st.text_area("Reason for Machine Idle/Delay")
+        if st.form_submit_button("Submit Production Data"):
+            logs = get_db("prod")
             new_log = pd.DataFrame([{
-                "Date": datetime.now().strftime("%Y-%m-%d"),
-                "Operator": st.session_state['user_id'],
-                "Machine": m_sel, "Product": p_name, "KM": km_out, 
-                "Material": mat, "Mat_Consumed": cons, "Scrap": scrp, 
-                "Stoppage_Info": stoppage if stoppage else "None", "Status": "Pending QCI"
+                "Date": datetime.now().strftime("%Y-%m-%d"), "Operator": st.session_state.auth["user"],
+                "Machine": m_sel, "Product": p_spec, "KM": km, "Material": mat, 
+                "Mat_Consumed": c_kg, "Scrap": s_kg, "Stoppage_Info": delay if delay else "Smooth", "Status": "QC Pending"
             }])
-            save_data(pd.concat([logs, new_log], ignore_index=True), "prod")
-            # Update Stock
-            if mat in stock_df['Item'].values:
-                stock_df.loc[stock_df['Item'] == mat, 'Quantity'] -= (cons + scrp)
-                save_data(stock_df, "stock")
-            st.success("Data Logged Successfully")
+            commit_db(pd.concat([logs, new_log]), "prod")
+            # Stock Logic
+            if mat in stock['Item'].values:
+                stock.loc[stock['Item'] == mat, 'Quantity'] -= (c_kg + s_kg)
+                commit_db(stock, "stock")
+            st.success("Entry Saved and Traceable to User.")
 
-# 4. ORDER BOOK (With Pro Search)
+# MODULE 4: ORDER BOOK (Searchable Grid)
 with tabs[3]:
-    st.header("📝 Customer Orders")
-    order_df = load_data("orders", ["Order_ID", "Customer", "Item", "Qty", "Deadline"])
-    search = st.text_input("🔍 Search Customer or Product")
+    st.subheader("Global Order Search")
+    orders = get_db("orders")
+    search = st.text_input("🔎 Search by Customer or Item...")
     if search:
-        st.dataframe(order_df[order_df.apply(lambda r: search.lower() in str(r).lower(), axis=1)], use_container_width=True)
+        st.dataframe(orders[orders.apply(lambda r: search.lower() in str(r).lower(), axis=1)], use_container_width=True)
     else:
-        st.dataframe(order_df, use_container_width=True)
+        st.dataframe(orders, use_container_width=True)
 
-# 5. ADMIN ANALYTICS (Professional KPI Dashboard)
-if st.session_state['user_role'] == "Admin":
-    with tabs[5]:
-        st.header("📊 Factory Executive Report")
-        p_logs = load_data("prod", ["Date", "Operator", "Machine", "KM", "Scrap", "Stoppage_Info"])
+# MODULE 6: BI ANALYTICS (Admin Only)
+with tabs[5]:
+    if st.session_state.auth["role"] != "Admin":
+        st.error("Access Restricted to Management Only.")
+    else:
+        st.subheader("Executive KPI Dashboard")
+        d_logs = get_db("prod")
+        d_prog = get_db("prog")
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Production (KM)", f"{p_logs['KM'].sum():.2f}")
-        c2.metric("Total Scrap (KG)", f"{p_logs['Scrap'].sum():.2f}")
-        c3.metric("Pending Orders", len(order_df))
+        c1, c2, c3, c4 = st.columns(4)
+        total_km = d_logs['KM'].sum()
+        total_scrp = d_logs['Scrap'].sum()
+        efficiency = (total_km / d_prog['Target_Qty'].sum() * 100) if d_prog['Target_Qty'].sum() > 0 else 0
         
-        st.subheader("Detailed Performance (Operator Traceability)")
-        st.dataframe(p_logs, use_container_width=True)
+        c1.metric("Gross Production", f"{total_km:.1f} KM")
+        c2.metric("Waste (Scrap)", f"{total_scrp:.1f} KG")
+        c3.metric("Plant Efficiency", f"{efficiency:.1f}%")
+        c4.metric("Active Operators", d_logs['Operator'].nunique())
+        
+        st.subheader("Operator Efficiency Scorecard")
+        st.dataframe(d_logs[["Date", "Operator", "Machine", "KM", "Stoppage_Info"]], use_container_width=True)
