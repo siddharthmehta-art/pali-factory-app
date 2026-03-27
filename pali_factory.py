@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="Pali Cable ERP - Professional", layout="wide")
+st.set_page_config(page_title="Pali Cable ERP - Master", layout="wide")
 
 # --- FILE PATHS ---
 USER_FILE = "users_db.csv"
@@ -13,14 +13,21 @@ STOCK_FILE = "stock_inventory.csv"
 ORDER_BOOK_FILE = "order_book.csv"
 FG_STOCK_FILE = "fg_stock.csv"
 
-# --- DATA LOADING & SAVING ---
+# --- DATA LOADING & CLEANING (Fixes the TypeError) ---
 def load_data(filename, default_cols):
     if os.path.exists(filename):
         try:
             df = pd.read_csv(filename)
+            # Ensure all columns exist
             for col in default_cols:
                 if col not in df.columns:
-                    df[col] = 0 if col in ['Quantity', 'KM', 'Scrap', 'Mat_Consumed'] else "None"
+                    df[col] = 0 if col in ['Quantity', 'KM', 'Scrap', 'Mat_Consumed'] else ""
+            
+            # CRITICAL FIX: Convert numeric columns and replace errors with 0
+            num_cols = ['KM', 'Scrap', 'Mat_Consumed', 'Quantity', 'Qty']
+            for col in num_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             return df
         except:
             return pd.DataFrame(columns=default_cols)
@@ -62,7 +69,7 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # --- TABS ---
-main_tabs = ["📋 Order Book", "🏗️ Production & Stoppage", "🧪 QCI Lab", "📦 Raw Material", "📊 Daily Reports"]
+main_tabs = ["📋 Orders", "🏗️ Production & Stoppage", "🧪 QCI Lab", "📦 Raw Material", "📊 Daily Reports"]
 if st.session_state['user_role'] == "Admin":
     main_tabs.append("👨‍💼 Admin Control")
 
@@ -80,7 +87,7 @@ with tabs[0]:
         fg = load_data(FG_STOCK_FILE, ["Item", "Qty", "Status"])
         st.dataframe(fg, use_container_width=True)
 
-# 2. PRODUCTION ENTRY (NOW WITH STOPPAGE DESCRIPTION)
+# 2. PRODUCTION ENTRY
 with tabs[1]:
     st.header("Machine Work & Stoppage Entry")
     stock_df = load_data(STOCK_FILE, ["Item", "Quantity"])
@@ -88,35 +95,26 @@ with tabs[1]:
         m_sel = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
         p_name = st.text_input("Batch/Product Name")
         km = st.number_input("Finished Production (KM)", min_value=0.0)
-        
         st.divider()
-        st.subheader("Material Deduction")
-        available_mats = stock_df['Item'].unique().tolist() if not stock_df.empty else ["Aluminum Rod", "XLPE", "PVC"]
-        mat = st.selectbox("Material Used", available_mats)
-        cons = st.number_input("Net Material Consumed (KG)", min_value=0.0)
+        mat = st.selectbox("Material Used", stock_df['Item'].unique() if not stock_df.empty else ["Aluminum Rod", "XLPE", "PVC"])
+        cons = st.number_input("Net Consumed (KG)", min_value=0.0)
         scrp = st.number_input("Scrap Produced (KG)", min_value=0.0)
-        
-        st.divider()
-        st.subheader("Machine Stoppage / Delay Info")
-        stop_reason = st.text_area("Reason for Delay/Stoppage (e.g. Power Cut, Wire Break, Maintenance, None)")
+        stop_reason = st.text_area("Reason for Delay/Stoppage (Optional)")
         
         if st.form_submit_button("Submit Daily Report"):
             total_deduct = cons + scrp
             if mat in stock_df['Item'].values:
-                # 1. Deduct Stock
                 stock_df.loc[stock_df['Item'] == mat, 'Quantity'] -= total_deduct
                 save_data(stock_df, STOCK_FILE)
-                # 2. Log Production + Stoppage
                 prod_log = load_data(PROD_FILE, ["Date", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info", "Status"])
                 new_log = pd.DataFrame([{
                     "Date": datetime.now().strftime("%Y-%m-%d"),
                     "Machine": m_sel, "Product": p_name, "KM": km, 
                     "Material": mat, "Mat_Consumed": cons, "Scrap": scrp, 
-                    "Stoppage_Info": stop_reason if stop_reason else "Smooth Run",
-                    "Status": "Pending QCI"
+                    "Stoppage_Info": stop_reason if stop_reason else "None", "Status": "Pending QCI"
                 }])
                 save_data(pd.concat([prod_log, new_log], ignore_index=True), PROD_FILE)
-                st.success("Entry Saved. Stock Adjusted.")
+                st.success("Entry Saved!")
 
 # 3. QCI LAB
 with tabs[2]:
@@ -136,36 +134,40 @@ with tabs[3]:
     rm_stock = load_data(STOCK_FILE, ["Item", "Quantity"])
     st.table(rm_stock)
 
-# 5. NEW DETAILED REPORTS (Daily Production, Consumed, Stoppage)
+# 5. REPORTS (Fixed the TypeError here)
 with tabs[4]:
     st.header("📊 Daily Factory Reports")
     full_data = load_data(PROD_FILE, ["Date", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info"])
-    
-    # Filter by Date (Defaults to Today)
     search_date = st.date_input("Filter Report by Date", datetime.now())
-    daily_filtered = full_data[full_data['Date'] == str(search_date)]
+    daily_filtered = full_data[full_data['Date'] == str(search_date)].copy()
     
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("📍 Daily Production (KM)")
-        st.dataframe(daily_filtered[["Machine", "Product", "KM"]], use_container_width=True)
-        
-    with col_b:
-        st.subheader("🔥 Material Consumed (KG)")
-        # Total deduction = Mat_Consumed + Scrap
-        if not daily_filtered.empty:
+    if daily_filtered.empty:
+        st.warning("No data found for this date.")
+    else:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.subheader("📍 Daily Production")
+            st.dataframe(daily_filtered[["Machine", "Product", "KM"]], use_container_width=True)
+            
+        with col_b:
+            st.subheader("🔥 Material Consumed (KG)")
+            # Math is now safe because we forced numeric conversion in load_data
             daily_filtered['Total_KG'] = daily_filtered['Mat_Consumed'] + daily_filtered['Scrap']
             st.dataframe(daily_filtered[["Material", "Mat_Consumed", "Scrap", "Total_KG"]], use_container_width=True)
-    
-    st.divider()
-    st.subheader("⚠️ Machine Delay & Stoppage Report")
-    st.table(daily_filtered[["Machine", "Stoppage_Info"]])
-    
-    st.download_button("📥 Download This Day's Report", daily_filtered.to_csv(index=False), f"Report_{search_date}.csv")
+        
+        st.divider()
+        st.subheader("⚠️ Machine Delay & Stoppage Report")
+        st.table(daily_filtered[["Machine", "Stoppage_Info"]])
 
 # 6. ADMIN CONTROL
 if st.session_state['user_role'] == "Admin":
     with tabs[5]:
         st.header("👨‍💼 Master Admin Tools")
-        # Correction and User Management same as before
-        st.write("Manage Staff and adjust stock here.")
+        # Manage Staff Account
+        with st.expander("👤 Create Operator Account"):
+            n_u = st.text_input("New ID")
+            n_p = st.text_input("Password")
+            if st.button("Save User"):
+                u_df = load_data(USER_FILE, ["UserID", "Password", "Role"])
+                u_df = pd.concat([u_df, pd.DataFrame([{"UserID": n_u, "Password": n_p, "Role": "Operator"}])], ignore_index=True)
+                save_data(u_df, USER_FILE); st.rerun()
