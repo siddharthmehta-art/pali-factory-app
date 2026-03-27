@@ -89,10 +89,10 @@ with tabs[1]:
     stk = get_db("stock")
     with st.form("p_form", clear_on_submit=True):
         m = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-        km = st.number_input("KM Produced", min_value=0.0)
+        km = st.number_input("KM Produced", min_value=0, value=0)
         mat = st.selectbox("Material", stk['Item'].unique() if not stk.empty else ["Aluminum"])
-        cons = st.number_input("Consumed (KG)", min_value=0.0)
-        scrp = st.number_input("Scrap (KG)", min_value=0.0)
+        cons = st.number_input("Consumed (KG)", min_value=0, value=0)
+        scrp = st.number_input("Scrap (KG)", min_value=0, value=0)
         stop = st.text_area("Stoppage Info")
         if st.form_submit_button("Submit"):
             p_logs = get_db("prod")
@@ -108,20 +108,36 @@ if role == "Admin":
         pending_qc = qc_logs[qc_logs['Status'] == "QC Pending"]
         if not pending_qc.empty:
             st.dataframe(pending_qc, use_container_width=True)
-            batch_id = st.selectbox("Select Machine Entry to Approve", pending_qc.index)
+            batch_id = st.selectbox("Select Entry ID to Approve", pending_qc.index)
             if st.button("Approve Batch"):
                 qc_logs.at[batch_id, 'Status'] = "Passed"
                 commit_db(qc_logs, "prod")
-                st.success("Batch Marked as Passed")
+                st.success("Batch Passed")
                 st.rerun()
         else:
             st.info("No pending inspections.")
 
-# TAB 4: ORDER BOOK
+# TAB 4: ORDER BOOK (WITH ADD ORDER FEATURE)
 order_idx = 3 if role == "Admin" else 2
 with tabs[order_idx]:
     st.subheader("📝 Customer Order Book")
     orders = get_db("orders")
+    
+    if role == "Admin":
+        with st.expander("➕ Add New Customer Order"):
+            with st.form("new_order_form", clear_on_submit=True):
+                oid = st.text_input("Order ID/No.")
+                cust = st.text_input("Customer Name")
+                item = st.text_input("Item Specification")
+                qty = st.number_input("Order Quantity (KM/Mtrs)", min_value=0, value=0)
+                date = st.date_input("Deadline", datetime.now())
+                if st.form_submit_button("Save Order"):
+                    new_ord = pd.DataFrame([{"Order_ID": oid, "Customer": cust, "Item": item, "Qty": qty, "Deadline": str(date)}])
+                    orders = pd.concat([orders, new_ord], ignore_index=True)
+                    commit_db(orders, "orders")
+                    st.success("Order Added Successfully")
+                    st.rerun()
+
     search_q = st.text_input("Search Customer Name")
     if search_q:
         st.dataframe(orders[orders['Customer'].str.contains(search_q, case=False, na=False)], use_container_width=True)
@@ -137,16 +153,15 @@ if role == "Admin":
         with st.expander("Update Stock Manually"):
             with st.form("stk_up"):
                 item_name = st.selectbox("Item", inv_data['Item'].unique() if not inv_data.empty else ["Aluminum"])
-                new_qty = st.number_input("New Absolute Quantity", min_value=0.0)
+                new_qty = st.number_input("New Quantity", min_value=0, value=0)
                 if st.form_submit_button("Update Stock"):
-                    old_qty = inv_data.loc[inv_data['Item'] == item_name, 'Quantity'].values[0]
+                    old_qty = inv_data.loc[inv_data['Item'] == item_name, 'Quantity'].values[0] if not inv_data.empty else 0
                     inv_data.loc[inv_data['Item'] == item_name, 'Quantity'] = new_qty
                     commit_db(inv_data, "stock")
-                    # Log to Audit
                     aud = get_db("audit")
-                    log = pd.DataFrame([{"Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "Admin": st.session_state.auth["user"], "Item": item_name, "Action": "Manual Correction", "Old_Val": old_qty, "New_Val": new_qty}])
+                    log = pd.DataFrame([{"Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "Admin": st.session_state.auth["user"], "Item": item_name, "Action": "Correction", "Old_Val": old_qty, "New_Val": new_qty}])
                     commit_db(pd.concat([aud, log]), "audit")
-                    st.success("Stock Updated")
+                    st.success("Stock Fixed")
                     st.rerun()
 
 # TAB 6: ANALYTICS
