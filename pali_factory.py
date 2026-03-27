@@ -1,176 +1,127 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
-import os
+import React, { useState } from 'react';
+import { 
+  LayoutDashboard, Package, Truck, FileText, 
+  Layers, Database, Settings, Bell, Search 
+} from 'lucide-react';
 
-# --- APP CONFIG ---
-st.set_page_config(page_title="Pali Cable ERP - Master", layout="wide")
+const SAPMasterPortal = () => {
+  const [activeTab, setActiveTab] = useState('Dashboard');
 
-# --- FILE PATHS ---
-USER_FILE = "users_db.csv"
-PROD_FILE = "production_logs.csv"
-STOCK_FILE = "stock_inventory.csv"
-ORDER_BOOK_FILE = "order_book.csv"
-FG_STOCK_FILE = "fg_stock.csv"
-PROG_FILE = "daily_programme.csv"
+  // 1. RAW MATERIAL STOCK DATA
+  const rawMaterials = [
+    { id: "RM-501", item: "Steel Rebars (12mm)", qty: "150 Tons", location: "Warehouse A", status: "In Stock" },
+    { id: "RM-502", item: "Solar Grade Silicon", qty: "45 Cases", location: "Warehouse B", status: "Low Stock" },
+  ];
 
-# --- DATA LOADING & CLEANING ---
-def load_data(filename, default_cols):
-    if os.path.exists(filename):
-        try:
-            df = pd.read_csv(filename)
-            for col in default_cols:
-                if col not in df.columns:
-                    df[col] = 0 if col in ['Quantity', 'KM', 'Scrap', 'Mat_Consumed', 'Qty', 'Target_Qty'] else ""
-            num_cols = ['KM', 'Scrap', 'Mat_Consumed', 'Quantity', 'Qty', 'Target_Qty']
-            for col in num_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            return df
-        except:
-            return pd.DataFrame(columns=default_cols)
-    return pd.DataFrame(columns=default_cols)
+  // 2. DEVELOPED STOCK (FINISHED GOODS)
+  const developedStock = [
+    { id: "FG-901", project: "Jalaun Solar Array", unit: "Panel Set Type-A", qty: "4,200 Units", value: "₹2.4Cr" },
+    { id: "FG-902", project: "RDSS Smart Meter", unit: "Phase-1 Modules", qty: "12,000 Units", value: "₹85L" },
+  ];
 
-def save_data(df, filename):
-    df.to_csv(filename, index=False)
-
-# --- LOGIN SYSTEM ---
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-
-users_df = load_data(USER_FILE, ["UserID", "Password", "Role"])
-if users_df.empty:
-    admin_setup = pd.DataFrame([{"UserID": "admin", "Password": "pali123", "Role": "Admin"}])
-    save_data(admin_setup, USER_FILE)
-    users_df = admin_setup
-
-if not st.session_state['logged_in']:
-    st.title("🛡️ Pali Cable ERP - Secure Login")
-    with st.form("login_gate"):
-        u_id = st.text_input("User ID")
-        u_pw = st.text_input("Password", type="password")
-        if st.form_submit_button("Enter Factory App"):
-            match = users_df[(users_df['UserID'] == u_id) & (users_df['Password'] == u_pw)]
-            if not match.empty:
-                st.session_state.update({'logged_in': True, 'user_role': match.iloc[0]['Role'], 'user_id': u_id})
-                st.rerun()
-            else:
-                st.error("Access Denied")
-    st.stop()
-
-# --- SIDEBAR ---
-st.sidebar.title(f"👤 {st.session_state['user_id']}")
-if st.sidebar.button("Logout"):
-    st.session_state['logged_in'] = False
-    st.rerun()
-
-# --- TABS ---
-main_tabs = ["📅 Daily Programme", "🏗️ Production Entry", "🧪 QCI Lab", "📝 Order Book"]
-if st.session_state['user_role'] == "Admin":
-    main_tabs.extend(["📦 Raw Material Stock", "📊 Executive Reports", "👨‍💼 Admin Control"])
-
-tabs = st.tabs(main_tabs)
-
-# 1. DAILY PROGRAMME (WITH CARRY-FORWARD LOGIC)
-with tabs[0]:
-    st.header("📅 Daily Production Programme")
-    prog_df = load_data(PROG_FILE, ["Date", "Shift", "Time", "Machine", "Target_Product", "Target_Qty", "Instructions"])
-    prod_df = load_data(PROD_FILE, ["Date", "Machine", "KM"])
-    
-    # --- ADMIN: SET PROGRAMME ---
-    if st.session_state['user_role'] == "Admin":
-        # Check for Pending Orders from Yesterday
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_prog = prog_df[prog_df['Date'] == yesterday]
+  return (
+    <div className="flex h-screen bg-slate-100 font-sans overflow-hidden">
+      
+      {/* --- SIDEBAR (Restored Navigation) --- */}
+      <div className="w-72 bg-[#1c222d] text-slate-300 flex flex-col shadow-xl">
+        <div className="p-6 text-xl font-bold text-white border-b border-slate-700 flex items-center gap-2">
+          <Database className="text-blue-400" /> ERP Central
+        </div>
         
-        if not yesterday_prog.empty:
-            st.subheader("⚠️ Pending Work from Yesterday")
-            for _, row in yesterday_prog.iterrows():
-                actual_done = prod_df[(prod_df['Date'] == yesterday) & (prod_df['Machine'] == row['Machine'])]['KM'].sum()
-                pending = row['Target_Qty'] - actual_done
-                
-                if pending > 0:
-                    st.warning(f"Machine {row['Machine']} missed target by {pending:.2f} KM")
-                    if st.button(f"Carry Forward {row['Machine']} to Today"):
-                        new_carry = pd.DataFrame([{
-                            "Date": datetime.now().strftime("%Y-%m-%d"),
-                            "Shift": "Day", "Time": "08:00 AM",
-                            "Machine": row['Machine'], "Target_Product": row['Target_Product'],
-                            "Target_Qty": pending, "Instructions": "CARRY FORWARD FROM YESTERDAY"
-                        }])
-                        prog_df = pd.concat([prog_df, new_carry], ignore_index=True)
-                        save_data(prog_df, PROG_FILE)
-                        st.rerun()
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          <p className="text-xs font-semibold text-slate-500 uppercase px-3 mb-2">Core Modules</p>
+          <NavItem icon={<LayoutDashboard size={18}/>} label="Executive Dashboard" active={activeTab === 'Dashboard'} onClick={() => setActiveTab('Dashboard')} />
+          <NavItem icon={<Layers size={18}/>} label="Developed Stock Report" active={activeTab === 'DevStock'} onClick={() => setActiveTab('DevStock')} />
+          <NavItem icon={<Package size={18}/>} label="Raw Material Stock" active={activeTab === 'RawMaterial'} onClick={() => setActiveTab('RawMaterial')} />
+          
+          <p className="text-xs font-semibold text-slate-500 uppercase px-3 mt-6 mb-2">Reports & Analytics</p>
+          <NavItem icon={<FileText size={18}/>} label="Solar Evacuation Reports" active={activeTab === 'Solar'} onClick={() => setActiveTab('Solar')} />
+          <NavItem icon={<Truck size={18}/>} label="Logistics & RDSS" active={activeTab === 'Logistics'} onClick={() => setActiveTab('Logistics')} />
+          <NavItem icon={<Settings size={18}/>} label="System Config" />
+        </nav>
+      </div>
 
-        with st.expander("📝 Add/Update Today's Programme"):
-            with st.form("new_prog"):
-                c1, c2, c3 = st.columns(3)
-                p_date = c1.date_input("Date", datetime.now())
-                p_shift = c2.selectbox("Shift", ["Day", "Night"])
-                p_time = c3.text_input("Time (e.g. 08:00 AM)")
-                
-                m_target = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-                p_target = st.text_input("Product Name/Size")
-                q_target = st.number_input("Target Quantity (KM)", min_value=0.0)
-                instr = st.text_area("Special Instructions")
-                
-                if st.form_submit_button("Save Programme"):
-                    # Avoid duplicates for same machine/date/shift
-                    prog_df = prog_df[~((prog_df['Machine'] == m_target) & (prog_df['Date'] == str(p_date)) & (prog_df['Shift'] == p_shift))]
-                    new_entry = pd.DataFrame([{"Date": str(p_date), "Shift": p_shift, "Time": p_time, "Machine": m_target, "Target_Product": p_target, "Target_Qty": q_target, "Instructions": instr}])
-                    save_data(pd.concat([prog_df, new_entry], ignore_index=True), PROG_FILE)
-                    st.rerun()
+      {/* --- MAIN CONTENT AREA --- */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="h-16 bg-white border-b flex items-center justify-between px-8">
+          <div className="flex items-center bg-gray-100 px-3 py-1.5 rounded-md w-96">
+            <Search size={16} className="text-gray-400 mr-2" />
+            <input type="text" placeholder="Search Transactions, Materials..." className="bg-transparent outline-none text-sm w-full" />
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-xs text-gray-500">Welcome Back</p>
+              <p className="text-sm font-bold text-gray-800">Admin User</p>
+            </div>
+            <div className="w-10 h-10 rounded bg-blue-600 text-white flex items-center justify-center font-bold">A</div>
+          </div>
+        </header>
 
-    # --- VIEW PROGRAMME (All Users) ---
-    st.divider()
-    view_date = st.date_input("View Plan For:", datetime.now())
-    daily_plan = prog_df[prog_df['Date'] == str(view_date)]
-    st.table(daily_plan[["Shift", "Time", "Machine", "Target_Product", "Target_Qty", "Instructions"]])
+        <main className="flex-1 overflow-y-auto p-8">
+          
+          {/* --- CONDITIONALLY RENDERED REPORTS --- */}
+          
+          {activeTab === 'DevStock' && (
+            <div className="animate-in fade-in duration-500">
+              <h2 className="text-2xl font-bold text-gray-800 mb-6">Developed Stock Report</h2>
+              <TableLayout headers={["Batch ID", "Project Link", "Unit Description", "Quantity", "Inventory Value"]} data={developedStock} />
+            </div>
+          )}
 
-# 2. PRODUCTION ENTRY (Traceability Preserved)
-with tabs[1]:
-    st.header("🏗️ Operator Production Entry")
-    stock_df = load_data(STOCK_FILE, ["Item", "Quantity"])
-    with st.form("prod_entry", clear_on_submit=True):
-        m_sel = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-        p_name = st.text_input("Product Produced")
-        km_out = st.number_input("Output KM", min_value=0.0)
-        st.divider()
-        mat = st.selectbox("Material Used", stock_df['Item'].unique() if not stock_df.empty else ["Aluminum Rod", "XLPE", "PVC"])
-        cons = st.number_input("Consumed (KG)", min_value=0.0)
-        scrp = st.number_input("Scrap (KG)", min_value=0.0)
-        stop_info = st.text_area("Delay/Stoppage Description")
-        
-        if st.form_submit_button("Submit Entry"):
-            # Update Production Log
-            prod_log = load_data(PROD_FILE, ["Date", "Operator", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info", "Status"])
-            new_log = pd.DataFrame([{
-                "Date": datetime.now().strftime("%Y-%m-%d"),
-                "Operator": st.session_state['user_id'],
-                "Machine": m_sel, "Product": p_name, "KM": km_out, 
-                "Material": mat, "Mat_Consumed": cons, "Scrap": scrp, 
-                "Stoppage_Info": stop_info if stop_info else "None", "Status": "Pending QCI"
-            }])
-            save_data(pd.concat([prod_log, new_log], ignore_index=True), PROD_FILE)
-            
-            # Deduct Stock
-            if mat in stock_df['Item'].values:
-                stock_df.loc[stock_df['Item'] == mat, 'Quantity'] -= (cons + scrp)
-                save_data(stock_df, STOCK_FILE)
-            st.success("Log Saved Successfully")
+          {activeTab === 'RawMaterial' && (
+            <div className="animate-in fade-in duration-500">
+              <h2 className="text-2xl font-bold text-gray-800 mb-6">Raw Material Inventory</h2>
+              <TableLayout headers={["Material ID", "Item Name", "Current Qty", "Warehouse", "Status"]} data={rawMaterials} />
+            </div>
+          )}
 
-# 3. QCI LAB & 4. ORDER BOOK (No changes to logic as requested)
-with tabs[2]:
-    st.header("🧪 QCI Lab")
-    # ... (Logic from previous code preserved)
-with tabs[3]:
-    st.header("📝 Order Book")
-    # ... (Logic from previous code preserved)
+          {activeTab === 'Dashboard' && (
+            <div className="grid grid-cols-3 gap-6">
+              <StatCard title="Total Stock Value" value="₹14.2 Cr" color="border-l-blue-500" />
+              <StatCard title="Active RDSS Projects" value="12" color="border-l-green-500" />
+              <StatCard title="Pending RM Orders" value="08" color="border-l-orange-500" />
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+};
 
-# --- ADMIN ONLY TABS ---
-if st.session_state['user_role'] == "Admin":
-    # 5. STOCK & 6. REPORTS (Preserved with Efficiency & Traceability)
-    with tabs[5]:
-        st.header("📊 Daily Executive Report")
-        # Simplified metrics logic here...
-        st.info("Check Machine Efficiency and Scrap % here.")
+// --- HELPER COMPONENTS (To keep it clean) ---
+const NavItem = ({ icon, label, active, onClick }) => (
+  <div 
+    onClick={onClick}
+    className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-all ${active ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-800 text-slate-400'}`}
+  >
+    {icon} <span className="text-sm font-medium">{label}</span>
+  </div>
+);
+
+const StatCard = ({ title, value, color }) => (
+  <div className={`bg-white p-6 rounded-lg shadow-sm border-l-4 ${color}`}>
+    <p className="text-sm text-gray-500 mb-1">{title}</p>
+    <p className="text-2xl font-bold text-gray-800">{value}</p>
+  </div>
+);
+
+const TableLayout = ({ headers, data }) => (
+  <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+    <table className="w-full text-left">
+      <thead className="bg-gray-50 border-b">
+        <tr>
+          {headers.map(h => <th key={h} className="p-4 text-xs uppercase text-gray-500 font-bold">{h}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {data.map((row, i) => (
+          <tr key={i} className="border-b hover:bg-slate-50">
+            {Object.values(row).map((val, j) => <td key={j} className="p-4 text-sm text-gray-700">{val}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+export default SAPMasterPortal;
