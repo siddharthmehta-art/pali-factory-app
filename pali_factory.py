@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="Pali Cable ERP - Performance Master", layout="wide")
+st.set_page_config(page_title="Pali Cable ERP - Master", layout="wide")
 
 # --- FILE PATHS ---
 USER_FILE = "users_db.csv"
@@ -12,7 +12,7 @@ PROD_FILE = "production_logs.csv"
 STOCK_FILE = "stock_inventory.csv"
 ORDER_BOOK_FILE = "order_book.csv"
 FG_STOCK_FILE = "fg_stock.csv"
-PROG_FILE = "daily_programme.csv"
+PROG_FILE = "daily_programme.csv" # New: Machine Scheduling
 
 # --- DATA LOADING & CLEANING ---
 def load_data(filename, default_cols):
@@ -21,8 +21,8 @@ def load_data(filename, default_cols):
             df = pd.read_csv(filename)
             for col in default_cols:
                 if col not in df.columns:
-                    df[col] = 0 if col in ['Quantity', 'KM', 'Scrap', 'Mat_Consumed', 'Qty', 'Target_Qty'] else ""
-            num_cols = ['KM', 'Scrap', 'Mat_Consumed', 'Quantity', 'Qty', 'Target_Qty']
+                    df[col] = 0 if col in ['Quantity', 'KM', 'Scrap', 'Mat_Consumed'] else "None"
+            num_cols = ['KM', 'Scrap', 'Mat_Consumed', 'Quantity', 'Qty']
             for col in num_cols:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -34,7 +34,7 @@ def load_data(filename, default_cols):
 def save_data(df, filename):
     df.to_csv(filename, index=False)
 
-# --- LOGIN SYSTEM ---
+# --- LOGIN SYSTEM (The Firewall) ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
@@ -64,105 +64,117 @@ if st.sidebar.button("Logout"):
     st.session_state['logged_in'] = False
     st.rerun()
 
-# --- TABS ---
+# --- TABS (Dynamic based on Role) ---
 main_tabs = ["📅 Daily Programme", "🏗️ Production Entry", "🧪 QCI Lab", "📝 Order Book"]
 if st.session_state['user_role'] == "Admin":
-    main_tabs.extend(["📦 Raw Material Stock", "📊 Performance & Efficiency", "👨‍💼 Admin Control"])
+    main_tabs.extend(["📦 Raw Material Stock", "📊 Admin Reports", "👨‍💼 Admin Control"])
 
 tabs = st.tabs(main_tabs)
 
-# 1. DAILY PROGRAMME
+# 1. DAILY PROGRAMME (All view, Admin updates)
 with tabs[0]:
-    st.header("📅 Production Planning")
-    prog_df = load_data(PROG_FILE, ["Date", "Time_Shift", "Machine", "Target_Product", "Target_Qty", "Instructions"])
+    st.header("📅 Machine Production Programme")
+    prog_df = load_data(PROG_FILE, ["Machine", "Target_Product", "Target_Qty", "Instructions"])
+    machines = ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"]
     
     if st.session_state['user_role'] == "Admin":
-        with st.expander("📝 Set New Targets"):
+        with st.expander("📝 Set Today's Programme (Admin Only)"):
             with st.form("update_prog"):
-                p_date = st.date_input("Date", datetime.now())
-                p_time = st.selectbox("Shift", ["Day", "Night"])
-                m_target = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-                p_target = st.text_input("Product Size")
-                q_target = st.number_input("Target KM", min_value=0.0)
-                instr = st.text_area("Notes")
-                if st.form_submit_button("Confirm Plan"):
-                    prog_df = prog_df[~((prog_df['Machine'] == m_target) & (prog_df['Date'] == str(p_date)))]
-                    new_entry = pd.DataFrame([{"Date": str(p_date), "Time_Shift": p_time, "Machine": m_target, "Target_Product": p_target, "Target_Qty": q_target, "Instructions": instr}])
-                    save_data(pd.concat([prog_df, new_entry], ignore_index=True), PROG_FILE); st.rerun()
+                m_target = st.selectbox("Select Machine", machines)
+                p_target = st.text_input("Target Product (Size/Spec)")
+                q_target = st.text_input("Target Quantity (KM)")
+                instr = st.text_area("Stoppage Prevention / Special Instructions")
+                if st.form_submit_button("Update Machine Plan"):
+                    prog_df = prog_df[prog_df['Machine'] != m_target] # Replace old plan
+                    new_entry = pd.DataFrame([{"Machine": m_target, "Target_Product": p_target, "Target_Qty": q_target, "Instructions": instr}])
+                    prog_df = pd.concat([prog_df, new_entry], ignore_index=True)
+                    save_data(prog_df, PROG_FILE); st.success(f"Plan Updated for {m_target}"); st.rerun()
+    
+    st.table(prog_df if not prog_df.empty else pd.DataFrame(columns=["Machine", "Target_Product", "Target_Qty", "Instructions"]))
 
-    view_date = st.date_input("View Plan Date:", datetime.now())
-    daily_view = prog_df[prog_df['Date'] == str(view_date)]
-    st.table(daily_view)
-
-# 2. PRODUCTION ENTRY
+# 2. PRODUCTION ENTRY (Now with Operator Name)
 with tabs[1]:
-    st.header("Operator Work Entry")
+    st.header("🏗️ Operator Production Entry")
     stock_df = load_data(STOCK_FILE, ["Item", "Quantity"])
     with st.form("prod_entry", clear_on_submit=True):
-        m_sel = st.selectbox("Your Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-        p_name = st.text_input("What was produced?")
-        km = st.number_input("Final KM Output", min_value=0.0)
+        m_sel = st.selectbox("Your Machine", machines)
+        p_name = st.text_input("Batch/Product Name")
+        km = st.number_input("Finished Production (KM)", min_value=0.0)
         st.divider()
         mat = st.selectbox("Material Used", stock_df['Item'].unique() if not stock_df.empty else ["Aluminum Rod", "XLPE", "PVC"])
-        cons = st.number_input("Weight Consumed (KG)", min_value=0.0)
+        cons = st.number_input("Net Material Consumed (KG)", min_value=0.0)
         scrp = st.number_input("Scrap Produced (KG)", min_value=0.0)
-        stop_reason = st.text_area("Reason for Stoppage/Delay")
-        if st.form_submit_button("Submit Production"):
+        stop_reason = st.text_area("Reason for Delay/Stoppage (Mandatory if any)")
+        
+        if st.form_submit_button("Submit Work Entry"):
+            total_deduct = cons + scrp
+            # Log with Operator ID
             prod_log = load_data(PROD_FILE, ["Date", "Operator", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info", "Status"])
-            new_log = pd.DataFrame([{"Date": datetime.now().strftime("%Y-%m-%d"), "Operator": st.session_state['user_id'], "Machine": m_sel, "Product": p_name, "KM": km, "Material": mat, "Mat_Consumed": cons, "Scrap": scrp, "Stoppage_Info": stop_reason if stop_reason else "Smooth", "Status": "Pending QCI"}])
+            new_log = pd.DataFrame([{
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "Operator": st.session_state['user_id'], # THE OPERATOR'S NAME
+                "Machine": m_sel, "Product": p_name, "KM": km, 
+                "Material": mat, "Mat_Consumed": cons, "Scrap": scrp, 
+                "Stoppage_Info": stop_reason if stop_reason else "None", "Status": "Pending QCI"
+            }])
             save_data(pd.concat([prod_log, new_log], ignore_index=True), PROD_FILE)
+            
+            # Stock Deduction
             if mat in stock_df['Item'].values:
-                stock_df.loc[stock_df['Item'] == mat, 'Quantity'] -= (cons + scrp)
+                stock_df.loc[stock_df['Item'] == mat, 'Quantity'] -= total_deduct
                 save_data(stock_df, STOCK_FILE)
-            st.success("Work Logged!")
+            st.success(f"Log submitted by {st.session_state['user_id']}")
 
-# --- ADMIN ONLY TABS ---
+# 3. QCI LAB
+with tabs[2]:
+    st.header("🧪 Quality Control Approval")
+    p_log = load_data(PROD_FILE, ["Date", "Operator", "Machine", "Product", "KM", "Status"])
+    pending = p_log[p_log['Status'] == "Pending QCI"]
+    if not pending.empty:
+        batch = st.selectbox("Select Batch", pending['Product'].unique())
+        if st.button("APPROVE & PASS QCI"):
+            p_log.loc[p_log['Product'] == batch, 'Status'] = "Passed"
+            save_data(p_log, PROD_FILE); st.rerun()
+
+# 4. ORDER BOOK
+with tabs[3]:
+    st.header("📝 Customer Orders")
+    orders = load_data(ORDER_BOOK_FILE, ["Order_ID", "Customer", "Item", "Qty", "Deadline"])
+    st.dataframe(orders, use_container_width=True)
+
+# --- ADMIN ONLY SECTIONS ---
 if st.session_state['user_role'] == "Admin":
-    # 6. PERFORMANCE & EFFICIENCY (The New Scorecard)
-    with tabs[5]:
-        st.header("📊 Operator Efficiency Scorecard")
-        rep_date = st.date_input("Select Date for Scorecard", datetime.now())
-        
-        # Load both DataFrames
-        day_prod = load_data(PROD_FILE, ["Date", "Operator", "Machine", "KM"])
-        day_prog = load_data(PROG_FILE, ["Date", "Machine", "Target_Qty"])
-        
-        # Filter for the selected date
-        actuals = day_prod[day_prod['Date'] == str(rep_date)].groupby(['Machine', 'Operator'])['KM'].sum().reset_index()
-        targets = day_prog[day_prog['Date'] == str(rep_date)][['Machine', 'Target_Qty']]
-        
-        if not actuals.empty and not targets.empty:
-            # Merge to compare
-            comparison = pd.merge(actuals, targets, on='Machine', how='left').fillna(0)
-            
-            # Calculate Score
-            comparison['Efficiency %'] = (comparison['KM'] / comparison['Target_Qty'] * 100).replace([float('inf')], 0).fillna(0)
-            
-            st.subheader(f"Efficiency Ratings for {rep_date}")
-            for index, row in comparison.iterrows():
-                col_score, col_details = st.columns([1, 4])
-                with col_score:
-                    # Color logic for score
-                    color = "green" if row['Efficiency %'] >= 90 else "orange" if row['Efficiency %'] >= 70 else "red"
-                    st.markdown(f"<h2 style='text-align: center; color: {color};'>{row['Efficiency %']:.1f}%</h2>", unsafe_allow_html=True)
-                with col_details:
-                    st.write(f"**Operator:** {row['Operator']} | **Machine:** {row['Machine']}")
-                    st.write(f"**Target:** {row['Target_Qty']} KM | **Actual:** {row['KM']} KM")
-                    st.progress(min(row['Efficiency %']/100, 1.0))
-            
-            st.divider()
-            st.subheader("Raw Data Comparison")
-            st.dataframe(comparison, use_container_width=True)
-        else:
-            st.warning("Ensure both a Programme (Target) and Production (Actual) are entered for this date to see scores.")
+    # 5. RAW MATERIAL (Admin Only)
+    with tabs[4]:
+        st.header("📦 Raw Material Availability (Private)")
+        rm_stock = load_data(STOCK_FILE, ["Item", "Quantity"])
+        st.table(rm_stock)
 
-    # 7. ADMIN CONTROL (Simplified Correction)
+    # 6. ADMIN REPORTS (Admin Only)
+    with tabs[5]:
+        st.header("📊 Daily Performance Reports")
+        full_data = load_data(PROD_FILE, ["Date", "Operator", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap", "Stoppage_Info"])
+        
+        search_date = st.date_input("Filter by Date", datetime.now())
+        daily_filtered = full_data[full_data['Date'] == str(search_date)].copy()
+        
+        if not daily_filtered.empty:
+            st.subheader(f"Final Production & Consumption for {search_date}")
+            # Showing Operator Names in the report
+            st.dataframe(daily_filtered[["Operator", "Machine", "Product", "KM", "Material", "Mat_Consumed", "Scrap"]], use_container_width=True)
+            
+            st.subheader("⚠️ Machinery Stoppage Log")
+            st.table(daily_filtered[["Operator", "Machine", "Stoppage_Info"]])
+        else:
+            st.info("No records found for this date.")
+
+    # 7. ADMIN CONTROL (Manage Staff)
     with tabs[6]:
-        st.header("👨‍💼 Master Controls")
-        with st.expander("🛠️ Delete Incorrect Production Entry"):
-            p_df = load_data(PROD_FILE, [])
-            if not p_df.empty:
-                del_id = st.selectbox("Select Batch to Remove", p_df['Product'].unique())
-                if st.button("Delete Entry Permanently"):
-                    p_df = p_df[p_df['Product'] != del_id]
-                    save_data(p_df, PROD_FILE); st.rerun()
+        st.header("👨‍💼 Staff Account Management")
+        with st.form("create_staff"):
+            n_u = st.text_input("New Operator ID")
+            n_p = st.text_input("New Password")
+            if st.form_submit_button("Create Account"):
+                users_df = load_data(USER_FILE, ["UserID", "Password", "Role"])
+                new_row = pd.DataFrame([{"UserID": n_u, "Password": n_p, "Role": "Operator"}])
+                save_data(pd.concat([users_df, new_row], ignore_index=True), USER_FILE); st.success(f"{n_u} Added")
