@@ -46,7 +46,9 @@ if not st.session_state['logged_in']:
         if st.form_submit_button("Login"):
             match = users_df[(users_df['UserID'] == u) & (users_df['Password'] == p)]
             if not match.empty:
-                st.session_state['logged_in'], st.session_state['user_role'], st.session_state['user_id'] = True, match.iloc[0]['Role'], u
+                st.session_state['logged_in'] = True
+                st.session_state['user_role'] = match.iloc[0]['Role']
+                st.session_state['user_id'] = u
                 st.rerun()
     st.stop()
 
@@ -58,11 +60,99 @@ if st.sidebar.button("Logout"):
 
 tabs = st.tabs(["📋 Daily Production Order", "🏗️ Production & Scrap Entry", "📦 Raw Material Stock", "📊 Reports"])
 
-# 1. DAILY PRODUCTION ORDER (3 COLUMNS ONLY)
+# 1. DAILY PRODUCTION ORDER (Fixed 3-Column System)
 with tabs[0]:
     st.header("Daily Production Order")
     order_df = load_data(ORDER_FILE, ["Machine", "Specs", "Quantity", "Order_Date"])
     
     if st.session_state['user_role'] == "Admin":
         with st.expander("➕ Create New Order"):
-            with st.form("order_form", clear_on_submit=
+            # FIXED SYNTAX ERROR BELOW
+            with st.form("order_form", clear_on_submit=True):
+                m_type = st.selectbox("Select Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
+                
+                # 3 Columns Input
+                specs = st.text_input("SPECS")
+                qty = st.number_input("QUANTITY (KM/Units)", min_value=0.0)
+                o_date = st.date_input("DATE OF PRODUCTION ORDER")
+                
+                if st.form_submit_button("Submit Order"):
+                    new_o = pd.DataFrame([{"Machine": m_type, "Specs": specs, "Quantity": qty, "Order_Date": o_date}])
+                    save_data(pd.concat([order_df, new_o], ignore_index=True), ORDER_FILE)
+                    st.success("Order Created!")
+                    st.rerun()
+    
+    if not order_df.empty:
+        st.subheader("Current Floor Orders")
+        # Display only the 3 specific columns requested + Machine
+        st.table(order_df[["Machine", "Specs", "Quantity", "Order_Date"]])
+        st.download_button("📥 Download Order Sheet", order_df.to_csv(index=False), "Daily_Orders.csv")
+
+# 2. PRODUCTION & SCRAP (Auto-Deduction Logic)
+with tabs[1]:
+    st.header("Machine Work Entry")
+    stock_df = load_data(STOCK_FILE, ["Item", "Quantity"])
+    
+    with st.form("prod_entry", clear_on_submit=True):
+        m_sel = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
+        p_name = st.text_input("Product Name/Size")
+        km_done = st.number_input("Output (KM)", min_value=0.0)
+        
+        st.divider()
+        st.subheader("Inventory Deduction")
+        # Handling empty stock list to prevent errors
+        mat_list = stock_df['Item'].unique().tolist() if not stock_df.empty else ["Aluminum Rod", "XLPE", "PVC", "Steel"]
+        mat_type = st.selectbox("Material Used", mat_list)
+        mat_consumed = st.number_input("Material Consumed in Production (KG)", min_value=0.0)
+        scrap_kg = st.number_input("Scrap Produced (KG)", min_value=0.0)
+        
+        if st.form_submit_button("Submit Entry"):
+            total_less = mat_consumed + scrap_kg
+            
+            if mat_type in stock_df['Item'].values:
+                current_q = stock_df.loc[stock_df['Item'] == mat_type, 'Quantity'].values[0]
+                if current_q >= total_less:
+                    # Deduct Stock
+                    stock_df.loc[stock_df['Item'] == mat_type, 'Quantity'] -= total_less
+                    save_data(stock_df, STOCK_FILE)
+                    
+                    # Save Log
+                    prod_log = load_data(PROD_FILE, ["Date", "Machine", "Product", "KM", "Scrap", "Material", "Total_Deduction"])
+                    new_log = pd.DataFrame([{
+                        "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Machine": m_sel, "Product": p_name, "KM": km_done, 
+                        "Scrap": scrap_kg, "Material": mat_type, "Total_Deduction": total_less
+                    }])
+                    save_data(pd.concat([prod_log, new_log], ignore_index=True), PROD_FILE)
+                    st.success(f"Log Saved! {total_less}kg deducted from {mat_type} stock.")
+                else:
+                    st.error(f"Insufficient Stock! You have {current_q}kg but need {total_less}kg.")
+            else:
+                st.error("Material not found in stock. Admin must add stock first.")
+
+# 3. RAW MATERIAL STOCK
+with tabs[2]:
+    st.header("Inventory Status")
+    curr_inv = load_data(STOCK_FILE, ["Item", "Quantity"])
+    if st.session_state['user_role'] == "Admin":
+        with st.expander("➕ Update Stock"):
+            with st.form("add_stock"):
+                it = st.selectbox("Item", ["Aluminum Rod", "XLPE Compound", "PVC Compound", "Steel Wire"])
+                q = st.number_input("Quantity Received (KG)", min_value=0.0)
+                if st.form_submit_button("Update Inventory"):
+                    if it in curr_inv['Item'].values:
+                        curr_inv.loc[curr_inv['Item'] == it, 'Quantity'] += q
+                    else:
+                        curr_inv = pd.concat([curr_inv, pd.DataFrame([{"Item": it, "Quantity": q}])], ignore_index=True)
+                    save_data(curr_inv, STOCK_FILE)
+                    st.success("Stock Added")
+                    st.rerun()
+    st.table(curr_inv)
+
+# 4. REPORTS
+with tabs[3]:
+    st.header("Master Factory Logs")
+    full_report = load_data(PROD_FILE, [])
+    st.dataframe(full_report, use_container_width=True)
+    if st.session_state['user_role'] == "Admin":
+        st.download_button("📥 Download Final Report", full_report.to_csv(index=False), "Pali_ERP_Full_Report.csv")
