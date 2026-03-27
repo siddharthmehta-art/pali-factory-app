@@ -4,15 +4,15 @@ from datetime import datetime
 import os
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="Pali Cable ERP - Tech Specs", layout="wide")
+st.set_page_config(page_title="Pali Cable ERP - Fixed", layout="wide")
 
-# --- PERMANENT FILE PATHS ---
-ORDER_FILE = "machine_orders.csv"
-PROD_FILE = "daily_production_logs.csv"
-INV_FILE = "raw_material_scrap.csv"
+# --- FILE PATHS ---
+ORDER_FILE = "production_orders.csv"
+PROD_FILE = "production_logs.csv"
+MAT_SCRAP_FILE = "material_scrap_logs.csv"
 
-# --- STORAGE FUNCTIONS ---
-def save_data(df, filename):
+# --- HELPER FUNCTIONS ---
+def save_to_csv(df, filename):
     if not os.path.isfile(filename):
         df.to_csv(filename, index=False)
     else:
@@ -25,133 +25,134 @@ def load_data(filename):
 
 # --- SIDEBAR & AUTH ---
 st.sidebar.title("🏢 Pali Cable & Conductors")
-role = st.sidebar.selectbox("Select Role", ["Operator", "Admin (Owner)"])
-admin_verified = False
+role = st.sidebar.selectbox("User Role", ["Operator", "Admin (Owner)"])
+is_admin = False
 if role == "Admin (Owner)":
     pwd = st.sidebar.text_input("Admin Password", type="password")
     if pwd == "pali123":
-        admin_verified = True
+        is_admin = True
 
 # --- MAIN TABS ---
-tabs = st.tabs(["📋 Machine Wise Orders", "🏗️ Production Entry", "📦 Raw Material & Scrap", "📊 Admin Reports"])
+tabs = st.tabs(["📋 View/Set Orders", "🏗️ Production Entry", "♻️ Raw Material & Scrap", "📊 Admin Reports"])
 
-# 1. DAILY PRODUCTION ORDER (Machine-Specific Inputs)
+# 1. DAILY PRODUCTION ORDER (Fixed Machine-Specific Columns)
 with tabs[0]:
-    st.header("Daily Production Order (Target)")
+    st.header("Daily Production Order")
     
-    if admin_verified:
-        with st.expander("➕ Create New Order (Admin Only)"):
+    if is_admin:
+        with st.expander("➕ Create New Machine Order", expanded=True):
+            # Using a unique key for the selectbox to prevent lagging
+            m_type = st.selectbox("Select Machine", 
+                                ["RBD", "TUBULAR", "19 BOBIN STRANDING", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"],
+                                key="admin_m_select")
+            
             with st.form("order_form", clear_on_submit=True):
-                m_type = st.selectbox("Select Machine for Order", 
-                                    ["RBD", "TUBULAR", "19 BOBIN STRANDING", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-                
-                # Dynamic Specification Columns based on Machine Selection
-                col1, col2, col3 = st.columns(3)
-                
                 specs = {}
-                with col1:
-                    if m_type == "RBD":
-                        specs["Wire Size"] = st.text_input("Wire Size")
-                        specs["Bobbin Size"] = st.text_input("Bobbin Size")
-                    elif m_type in ["TUBULAR", "19 BOBIN STRANDING"]:
-                        specs["Wire Size"] = st.text_input("Wire Size")
-                        specs["Length"] = st.text_input("Length")
-                    elif m_type == "CORE LAYING":
-                        specs["Size"] = st.text_input("Size")
-                        specs["Length"] = st.text_input("Length")
-                    elif m_type in ["EXTRUDER SMALL", "EXTRUDER BIG"]:
-                        specs["Size"] = st.text_input("Size")
+                col1, col2 = st.columns(2)
+                
+                # MACHINE SPECIFIC LOGIC
+                if m_type == "RBD":
+                    with col1:
+                        specs["WIRE SIZE"] = st.text_input("Wire Size")
+                        specs["BOBIN SIZE"] = st.text_input("Bobin Size")
+                        specs["METER"] = st.text_input("Meter")
+                    with col2:
+                        specs["GRADE"] = st.text_input("Grade")
+                        specs["NO OF BOBIN"] = st.text_input("No of Bobin")
+
+                elif m_type in ["TUBULAR", "19 BOBIN STRANDING"]:
+                    with col1:
+                        specs["WIRE SIZE"] = st.text_input("Wire Size")
+                        specs["LENGTH"] = st.text_input("Length")
+                    with col2:
+                        specs["WEIGHT"] = st.text_input("Weight")
                         specs["OD"] = st.text_input("OD")
-                    else: # Rewinding
-                        specs["Size"] = st.text_input("Size")
 
-                with col2:
-                    if m_type == "RBD":
-                        specs["Meter"] = st.text_input("Meter")
-                        specs["Grade"] = st.text_input("Grade")
-                    elif m_type in ["TUBULAR", "19 BOBIN STRANDING"]:
-                        specs["Weight"] = st.text_input("Weight")
+                elif m_type == "CORE LAYING":
+                    with col1: specs["SIZE"] = st.text_input("Size")
+                    with col2: specs["LENGTH"] = st.text_input("Length")
+
+                elif m_type in ["EXTRUDER SMALL", "EXTRUDER BIG"]:
+                    with col1:
+                        specs["SIZE"] = st.text_input("Size")
                         specs["OD"] = st.text_input("OD")
-                    elif m_type in ["EXTRUDER SMALL", "EXTRUDER BIG"]:
-                        specs["Length"] = st.text_input("Length")
-                        specs["Quantity"] = st.text_input("Quantity")
+                    with col2:
+                        specs["LENGTH"] = st.text_input("Length")
+                        specs["QUANTITY"] = st.text_input("Quantity")
+                
+                else: # REWINDING
+                    specs["SIZE"] = st.text_input("Size")
+                    specs["REMARK"] = st.text_input("Remark")
 
-                with col3:
-                    if m_type == "RBD":
-                        specs["No of Bobbin"] = st.text_input("No of Bobbin")
-                    delivery_date = st.date_input("Delivery Deadline")
-
-                if st.form_submit_button("Issue Machine Order"):
-                    # Combine all specs into a single string for the table
-                    spec_summary = " | ".join([f"{k}: {v}" for k, v in specs.items()])
+                if st.form_submit_button("Submit Order to Floor"):
+                    spec_str = " | ".join([f"{k}: {v}" for k, v in specs.items()])
                     new_order = pd.DataFrame([{
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Date_Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "Machine": m_type,
-                        "Technical_Specs": spec_summary,
-                        "Deadline": delivery_date
+                        "Specifications": spec_str
                     }])
-                    save_data(new_order, ORDER_FILE)
-                    st.success(f"Order for {m_type} sent to floor!")
+                    save_to_csv(new_order, ORDER_FILE)
+                    st.success(f"Order for {m_type} added!")
 
-    # Display Current Orders (Downloadable for everyone)
-    order_history = load_data(ORDER_FILE)
-    if not order_history.empty:
-        st.subheader("Current Floor Orders")
-        st.dataframe(order_history, use_container_width=True)
-        st.download_button("📥 Download Daily Order Sheet", order_history.to_csv(index=False).encode('utf-8'), "Production_Orders.csv")
-    else:
-        st.info("No active production orders.")
+    # Visible to Operators and Admin
+    st.subheader("Current Orders for Floor")
+    order_df = load_data(ORDER_FILE)
+    if not order_df.empty:
+        st.dataframe(order_df, use_container_width=True)
+        st.download_button("📥 Download Daily Order List", order_df.to_csv(index=False).encode('utf-8'), "Daily_Orders.csv")
 
-# 2. PRODUCTION ENTRY (Remains same but saves automatically)
+# 2. PRODUCTION ENTRY (Operator Access)
 with tabs[1]:
-    st.header("Machine Production Entry")
-    with st.form("prod_entry", clear_on_submit=True):
-        m_sel = st.selectbox("Machine", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
-        km_done = st.number_input("Output (KM/Units)", min_value=0.0)
-        op_name = st.text_input("Operator Name")
-        if st.form_submit_button("Submit Work"):
-            prod_entry = pd.DataFrame([{
-                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "Machine": m_sel, "Actual_Output": km_done, "Operator": op_name
+    st.header("Daily Production Output")
+    with st.form("prod_form", clear_on_submit=True):
+        p_m = st.selectbox("Machine Worked On", ["RBD", "TUBULAR", "19 BOBIN", "CORE LAYING", "EXTRUDER SMALL", "EXTRUDER BIG", "REWINDING ADDA"])
+        p_out = st.text_input("Total Output (KM/Units)")
+        p_name = st.text_input("Operator Name")
+        if st.form_submit_button("Submit Production"):
+            p_data = pd.DataFrame([{
+                "Date_Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Machine": p_m, "Output": p_out, "Operator": p_name
             }])
-            save_data(prod_entry, PROD_FILE)
-            st.success("Log saved!")
+            save_to_csv(p_data, PROD_FILE)
+            st.success("Production Logged!")
 
-# 3. RAW MATERIAL & SCRAP
+# 3. RAW MATERIAL & SCRAP (Operator Access as requested)
 with tabs[2]:
-    st.header("Raw Material & Scrap Update")
-    if admin_verified:
-        with st.form("inv_form", clear_on_submit=True):
-            item = st.selectbox("Material", ["Aluminum Rod", "XLPE Compound", "PVC Compound", "Steel Wire", "Other"])
-            stock_change = st.number_input("Stock Movement (KG)", value=0.0)
-            scrap_kg = st.number_input("Scrap Generated (KG)", min_value=0.0)
-            if st.form_submit_button("Update Stock & Scrap"):
-                inv_entry = pd.DataFrame([{
-                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Item": item, "Movement": stock_change, "Scrap": scrap_kg
-                }])
-                save_data(inv_entry, INV_FILE)
-                st.success("Inventory records updated!")
-    else:
-        st.info("Admin login required to update stock/scrap.")
-
-# 4. ADMIN REPORTS
-with tabs[3]:
-    st.header("📊 Performance Reports")
-    if admin_verified:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.subheader("Production History")
-            p_logs = load_data(PROD_FILE)
-            st.dataframe(p_logs)
-            if not p_logs.empty:
-                st.download_button("Download Production Summary", p_logs.to_csv(index=False).encode('utf-8'), "Production_Report.csv")
+    st.header("Update Raw Material & Scrap")
+    with st.form("mat_form", clear_on_submit=True):
+        m_item = st.selectbox("Material Name", ["Aluminum Rod", "XLPE", "PVC", "Steel Wire", "Other"])
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            m_used = st.number_input("Material Used (KG)", min_value=0.0)
+        with col_m2:
+            m_scrap = st.number_input("Scrap Produced (KG)", min_value=0.0)
         
-        with col_b:
-            st.subheader("Material & Scrap Report")
-            i_logs = load_data(INV_FILE)
-            st.dataframe(i_logs)
-            if not i_logs.empty:
-                st.download_button("Download Material Report", i_logs.to_csv(index=False).encode('utf-8'), "Material_Scrap_Report.csv")
+        m_op = st.text_input("Updated By (Staff Name)")
+        
+        if st.form_submit_button("Save Material Entry"):
+            m_data = pd.DataFrame([{
+                "Date_Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Material": m_item, "Used_KG": m_used, "Scrap_KG": m_scrap, "Operator": m_op
+            }])
+            save_to_csv(m_data, MAT_SCRAP_FILE)
+            st.success("Material & Scrap data saved!")
+
+# 4. ADMIN REPORTS (Admin Access Only)
+with tabs[3]:
+    st.header("📊 Factory Reports (Admin Only)")
+    if is_admin:
+        # Show Production Summary
+        st.subheader("Daily Production Log")
+        all_prod = load_data(PROD_FILE)
+        st.dataframe(all_prod)
+        if not all_prod.empty:
+            st.download_button("Download Production Summary", all_prod.to_csv(index=False).encode('utf-8'), "Full_Production_Report.csv")
+
+        # Show Material Summary
+        st.subheader("Raw Material & Scrap Log")
+        all_mat = load_data(MAT_SCRAP_FILE)
+        st.dataframe(all_mat)
+        if not all_mat.empty:
+            st.download_button("Download Material/Scrap Report", all_mat.to_csv(index=False).encode('utf-8'), "Material_Scrap_Report.csv")
     else:
-        st.error("Access Restricted")
+        st.error("Admin Login Required for Reports.")
