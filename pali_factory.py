@@ -13,12 +13,12 @@ STOCK_FILE = "stock_inventory.csv"
 QCI_FILE = "qci_testing_logs.csv"
 ORDER_FILE = "production_orders.csv"
 
-# --- FIXED DATA LOADING (Prevents KeyError) ---
+# --- FIXED DATA LOADING (Self-Healing Logic) ---
 def load_data(filename, default_cols):
     if os.path.exists(filename):
         try:
             df = pd.read_csv(filename)
-            # Ensure all required columns exist in the loaded file
+            # FIX: If file exists but missing columns (like Status), add them automatically
             for col in default_cols:
                 if col not in df.columns:
                     df[col] = "Pending QCI" if col == "Status" else ""
@@ -49,11 +49,13 @@ if not st.session_state['logged_in']:
         if st.form_submit_button("Login"):
             match = users_df[(users_df['UserID'] == u) & (users_df['Password'] == p)]
             if not match.empty:
-                st.session_state['logged_in'], st.session_state['user_role'], st.session_state['user_id'] = True, match.iloc[0]['Role'], u
+                st.session_state['logged_in'] = True
+                st.session_state['user_role'] = match.iloc[0]['Role']
+                st.session_state['user_id'] = u
                 st.rerun()
     st.stop()
 
-# --- MAIN APP ---
+# --- MAIN NAVIGATION ---
 st.sidebar.title(f"User: {st.session_state['user_id']}")
 if st.sidebar.button("Logout"):
     st.session_state['logged_in'] = False
@@ -76,7 +78,7 @@ with tabs[0]:
                     st.success("Order Sent!")
     st.dataframe(load_data(ORDER_FILE, ["Timestamp", "Machine", "Specs", "Target"]))
 
-# 2. PRODUCTION & SCRAP (Operators)
+# 2. PRODUCTION & SCRAP
 with tabs[1]:
     st.header("Daily Machine Entry")
     with st.form("prod_form", clear_on_submit=True):
@@ -111,31 +113,39 @@ with tabs[2]:
 with tabs[3]:
     st.header("Quality Control Inspection")
     prod_data = load_data(PROD_FILE, ["Date", "Machine", "Product", "KM", "Scrap", "Status"])
-    pending = prod_data[prod_data['Status'] == "Pending QCI"]
-    
-    if pending.empty:
-        st.info("No items pending QCI.")
+    # Filter only items that are pending
+    if 'Status' in prod_data.columns:
+        pending = prod_data[prod_data['Status'] == "Pending QCI"]
+        if pending.empty:
+            st.info("No items pending QCI.")
+        else:
+            selected_prod = st.selectbox("Select Batch", pending['Product'].unique())
+            with st.form("qci_form"):
+                st.write(f"Testing: {selected_prod}")
+                test1 = st.checkbox("Resistance Test Passed?")
+                test2 = st.checkbox("HV Test Passed?")
+                if st.form_submit_button("Approve for Dispatch"):
+                    if test1 and test2:
+                        prod_data.loc[prod_data['Product'] == selected_prod, 'Status'] = "Ready for Dispatch"
+                        save_data(prod_data, PROD_FILE)
+                        st.success("Passed and Ready for Dispatch!")
+                        st.rerun()
+                    else:
+                        st.error("Cannot approve without passing tests.")
     else:
-        selected_prod = st.selectbox("Select Batch", pending['Product'].unique())
-        with st.form("qci_form"):
-            st.write(f"Testing: {selected_prod}")
-            test1 = st.checkbox("Resistance Test Passed?")
-            test2 = st.checkbox("HV Test Passed?")
-            if st.form_submit_button("Approve for Dispatch"):
-                if test1 and test2:
-                    prod_data.loc[prod_data['Product'] == selected_prod, 'Status'] = "Ready for Dispatch"
-                    save_data(prod_data, PROD_FILE)
-                    st.success("Passed and Ready for Dispatch!")
-                    st.rerun()
-                else:
-                    st.error("Cannot approve without passing tests.")
+        st.error("Data structure error. Please log a new production entry.")
 
 # 5. REPORTS
 with tabs[4]:
     st.header("Reports & Final Stock")
-    final_df = load_data(PROD_FILE, [])
+    final_df = load_data(PROD_FILE, ["Date", "Machine", "Product", "KM", "Scrap", "Status"])
+    
     st.subheader("Ready for Dispatch (Finished Products)")
-    st.dataframe(final_df[final_df['Status'] == "Ready for Dispatch"])
+    # Double check for Status column before filtering
+    if 'Status' in final_df.columns:
+        st.dataframe(final_df[final_df['Status'] == "Ready for Dispatch"])
+    else:
+        st.write("No dispatch-ready items found.")
     
     if st.session_state['user_role'] == "Admin":
         st.download_button("Download All Records", final_df.to_csv(index=False), "Factory_Report.csv")
